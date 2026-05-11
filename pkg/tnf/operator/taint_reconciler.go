@@ -80,6 +80,9 @@ func reconcileNodeTaint(ctx context.Context, kubeClient kubernetes.Interface, n 
 	if n == nil {
 		return
 	}
+	if !autoTaintEnabled() {
+		return
+	}
 	if tools.IsNodeReady(n) {
 		if hasOutOfServiceTaint(n) {
 			klog.Infof("auto-taint: %s is Ready; removing out-of-service taint", n.Name)
