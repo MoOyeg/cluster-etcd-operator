@@ -82,6 +82,14 @@ func HandleDualReplicaClusters(
 	// we need node names for assigning auth and after-setup jobs to specific nodes
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
 	klog.Infof("watching for nodes...")
+
+	// Start the auto out-of-service-taint reconciler. It is a no-op while the
+	// TNF_AUTO_OUT_OF_SERVICE_TAINT env-var is unset, so calling it
+	// unconditionally is safe; the per-call enablement check keeps it dormant
+	// on clusters where the feature gate is off. See
+	// enhancements/two-node-fencing/auto-out-of-service-taint.md.
+	startTaintReconciler(ctx, kubeClient, controlPlaneNodeLister)
+
 	_, err = controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			node, ok := obj.(*corev1.Node)
@@ -89,6 +97,12 @@ func HandleDualReplicaClusters(
 				klog.Warningf("failed to convert added object to Node %+v", obj)
 				return
 			}
+
+			// auto-taint fast path: react immediately on every Node we see at
+			// startup, in addition to the periodic reconciler tick. Cleans up
+			// any taint left from a prior incident if the node is back Ready,
+			// and applies one if Pacemaker already reports the node fenced.
+			reconcileNodeTaint(ctx, kubeClient, node, time.Now())
 
 			// ignore nodes which are not ready yet
 			if !tools.IsNodeReady(node) {
@@ -109,9 +123,18 @@ func HandleDualReplicaClusters(
 				return
 			}
 
-			// only handle if node transitioned from not ready to ready
 			oldReady := tools.IsNodeReady(oldNode)
 			newReady := tools.IsNodeReady(newNode)
+
+			// auto-taint fast path on either Ready transition. The reconciler
+			// would catch this within taintReconcilerPeriod anyway, but
+			// reacting on the event reduces the worst-case latency between
+			// Ready transition and taint apply/remove.
+			if oldReady != newReady {
+				reconcileNodeTaint(ctx, kubeClient, newNode, time.Now())
+			}
+
+			// only handle if node transitioned from not ready to ready
 			if !oldReady && newReady {
 				klog.Infof("node %s transitioned to ready state", newNode.GetName())
 				// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
@@ -309,6 +332,12 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		// The controller will wait for this informer to sync before processing events
 		klog.Infof("starting PacemakerCluster informer")
 		go pacemakerInformer.Run(ctx.Done())
+
+		// Publish the informer so the auto-taint reconciler can consult its
+		// store on each tick. The reconciler tolerates an unsynced informer
+		// (treats it as "fence-state unknown" and falls back to the NotReady
+		// duration threshold), so it is safe to publish before WaitForCacheSync.
+		pacemakerInformerRef.Store(&pacemakerInformer)
 
 		// Start the healthcheck controller
 		klog.Infof("starting Pacemaker healthcheck controller")
