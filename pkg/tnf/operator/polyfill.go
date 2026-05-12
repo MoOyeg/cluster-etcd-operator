@@ -46,11 +46,17 @@ func RunPolyfill(ctx context.Context, restConfig *rest.Config) error {
 
 	// Node informer scoped to control-plane nodes via label selector. This
 	// mirrors the production controller's controlPlaneNodeInformer.
+	//
+	// On TNF the two control-plane nodes also carry the worker role label
+	// (combo nodes), so the selector must match on control-plane alone — a
+	// "!worker" exclusion would empty the lister on every TNF cluster. The
+	// gate function isControlPlaneNode in fenced.go is the authoritative
+	// check; the informer just needs to deliver candidates.
 	factory := informers.NewSharedInformerFactoryWithOptions(
 		kubeClient,
 		30*time.Second,
 		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
-			opts.LabelSelector = labelControlPlane + ",!" + "node-role.kubernetes.io/worker"
+			opts.LabelSelector = labelControlPlane
 		}),
 	)
 	nodeInformer := factory.Core().V1().Nodes().Informer()
