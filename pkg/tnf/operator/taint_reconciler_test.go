@@ -79,3 +79,30 @@ func TestReconcileNodeTaintFeatureGate(t *testing.T) {
 		}
 	})
 }
+
+func TestConfiguredNotReadyApplyThreshold(t *testing.T) {
+	t.Run("uses default when unset", func(t *testing.T) {
+		t.Setenv(notReadyApplyThresholdEnvVar, "")
+		if got := configuredNotReadyApplyThreshold(); got != notReadyApplyThreshold {
+			t.Fatalf("expected default threshold %s, got %s", notReadyApplyThreshold, got)
+		}
+	})
+
+	t.Run("uses positive whole seconds from env", func(t *testing.T) {
+		t.Setenv(notReadyApplyThresholdEnvVar, "45")
+		if got := configuredNotReadyApplyThreshold(); got != 45*time.Second {
+			t.Fatalf("expected 45s threshold, got %s", got)
+		}
+	})
+
+	t.Run("falls back on invalid values", func(t *testing.T) {
+		for _, tc := range []string{"0", "-1", "forty-five"} {
+			t.Run(tc, func(t *testing.T) {
+				t.Setenv(notReadyApplyThresholdEnvVar, tc)
+				if got := configuredNotReadyApplyThreshold(); got != notReadyApplyThreshold {
+					t.Fatalf("expected default threshold %s for %q, got %s", notReadyApplyThreshold, tc, got)
+				}
+			})
+		}
+	})
+}

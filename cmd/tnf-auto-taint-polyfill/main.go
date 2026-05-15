@@ -11,6 +11,7 @@
 //
 //	export KUBECONFIG=/path/to/kubeconfig
 //	export TNF_AUTO_OUT_OF_SERVICE_TAINT=true   # required to make it act
+//	export TNF_AUTO_OUT_OF_SERVICE_TAINT_NOTREADY_THRESHOLD_SECONDS=30
 //	go run ./cmd/tnf-auto-taint-polyfill
 //
 // This binary is NOT shipped in the cluster-etcd-operator container image

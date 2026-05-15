@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +32,8 @@ var (
 	taintReconcilerPeriod  = 30 * time.Second
 )
 
+const notReadyApplyThresholdEnvVar = "TNF_AUTO_OUT_OF_SERVICE_TAINT_NOTREADY_THRESHOLD_SECONDS"
+
 // pacemakerInformerRef holds a reference to the PacemakerCluster informer once
 // runPacemakerControllers has created it. Read by the taint reconciler on each
 // tick. nil-safe: a nil/unsynced informer disables the Pacemaker fast path and
@@ -46,6 +49,23 @@ var pacemakerInformerRef atomic.Pointer[cache.SharedIndexInformer]
 // HandleDualReplicaClusters.
 func autoTaintEnabled() bool {
 	return os.Getenv("TNF_AUTO_OUT_OF_SERVICE_TAINT") == "true"
+}
+
+// configuredNotReadyApplyThreshold returns the default threshold unless a
+// positive whole-second override is supplied for lab tuning.
+func configuredNotReadyApplyThreshold() time.Duration {
+	raw := os.Getenv(notReadyApplyThresholdEnvVar)
+	if raw == "" {
+		return notReadyApplyThreshold
+	}
+
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		klog.Warningf("auto-taint: ignoring invalid %s=%q; using default %s", notReadyApplyThresholdEnvVar, raw, notReadyApplyThreshold)
+		return notReadyApplyThreshold
+	}
+
+	return time.Duration(seconds) * time.Second
 }
 
 // startTaintReconciler launches a goroutine that, every taintReconcilerPeriod,
@@ -92,7 +112,7 @@ func reconcileNodeTaint(ctx context.Context, kubeClient kubernetes.Interface, n 
 		}
 		return
 	}
-	apply, reason := shouldApplyOutOfServiceTaint(n, now, notReadyApplyThreshold, currentPacemakerLookup())
+	apply, reason := shouldApplyOutOfServiceTaint(n, now, configuredNotReadyApplyThreshold(), currentPacemakerLookup())
 	if !apply {
 		return
 	}
